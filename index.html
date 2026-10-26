@@ -48,6 +48,9 @@ document.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>{stop();mode=b
 el('taskForm').onsubmit=e=>{e.preventDefault();const title=el('taskInput').value.trim();if(!title)return;const id=Date.now()+Math.random();data.tasks.push({id,title,done:false});selected=id;el('taskInput').value='';persistTimer();render()};
 el('date').textContent=new Intl.DateTimeFormat('zh-CN',{month:'long',day:'numeric',weekday:'long'}).format(new Date());
 document.addEventListener('visibilitychange',tick);
+// Quick keys only when the page itself owns focus. Never steal typing or button activation.
+document.addEventListener('keydown',e=>{if(e.repeat||e.altKey||e.ctrlKey||e.metaKey||e.isComposing)return;if(e.target instanceof HTMLElement&&e.target.closest('button,input,textarea,select,[contenteditable]'))return;if(e.code==='Space'){e.preventDefault();el('toggle').click()}else if(e.code==='KeyR'){e.preventDefault();el('reset').click()}});
+
 document.querySelectorAll('[data-mode]').forEach(b=>{b.classList.toggle('active',b.dataset.mode===mode);b.setAttribute('aria-pressed',String(b.dataset.mode===mode))});document.querySelector('.mode-switch').style.setProperty('--active-offset',({focus:'0%',short:'100%',long:'200%'})[mode]);
 render();
 if(savedTimer?.running&&Number.isFinite(savedTimer.endAt)&&savedTimer.endAt>0){
