@@ -76,10 +76,33 @@ async function reload(){
  await waitFor(()=>evaluate("document.readyState==='complete'&&!!document.getElementById('toggle')"));
 }
 function log(s){console.log('PASS '+s)}
+async function capture(name){
+ const shot=await command('Page.captureScreenshot',{format:'png'});
+ const dir=path.join(project,'.taste-skill','focus-evidence');
+ fs.mkdirSync(dir,{recursive:true});
+ fs.writeFileSync(path.join(dir,name+'.png'),Buffer.from(shot.data,'base64'));
+}
 async function main(){
  await launch();
  assert.equal(await evaluate("document.getElementById('clock').textContent"),'25:00');
  log('Initial timer renders');
+ await command('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
+ await capture('mode-idle-390');
+ const sliderBefore=await evaluate("getComputedStyle(document.querySelector('.mode-switch'),'::before').transform");
+ await evaluate("document.querySelector('[data-mode=short]').click()");
+ await sleep(40);
+ const sliderDuring=await evaluate("getComputedStyle(document.querySelector('.mode-switch'),'::before').transform");
+ await capture('mode-during-390');
+ await sleep(380);
+ await capture('mode-settled-390');
+ const sliderAfter=await evaluate("getComputedStyle(document.querySelector('.mode-switch'),'::before').transform");
+ assert.notEqual(sliderAfter,sliderBefore,'Mode highlight must move rather than jump states');
+ assert.notEqual(sliderDuring,sliderBefore,'Mode indicator should leave its origin during transition');
+ assert.notEqual(sliderDuring,sliderAfter,'Mode indicator should have a distinct intermediate frame');
+ assert.equal(await evaluate("document.querySelector('[data-mode=short]').getAttribute('aria-pressed')"),'true');
+ await evaluate("document.querySelector('[data-mode=focus]').click()");
+ await command('Emulation.setDeviceMetricsOverride',{width:1440,height:900,deviceScaleFactor:1,mobile:false});
+ log('Animated mode indicator responds and exposes pressed state (idle/during/settled screenshots saved)');
  await evaluate("localStorage.setItem('focus-deck-v1',JSON.stringify({tasks:[{id:9,title:'已存在的任务',done:false}],history:{'2026-10-25':50},pomodoros:2}))");
  await reload();
  assert.equal(await evaluate("document.getElementById('taskList').textContent.includes('已存在的任务')"),true);
@@ -122,6 +145,15 @@ async function main(){
  await reload();
  assert.equal(await evaluate("document.getElementById('clock').textContent"),'25:00');
  log('Reset state survives reload');
+ assert.equal(await evaluate("document.querySelector('.side').contains(document.querySelector('.stats'))"),true);
+ const hits=await evaluate("Array.from(document.querySelectorAll('.task .check, .task .del')).map(e=>({w:e.getBoundingClientRect().width,h:e.getBoundingClientRect().height}))");
+ assert.ok(hits.length>0&&hits.every(b=>b.w>=44&&b.h>=44),'Task action targets must be at least 44px');
+ log('Stats remain beside desktop tasks and task actions meet 44px hit target');
+ await evaluate("document.querySelector('.task:last-child .check').click()");
+ assert.equal(await evaluate("document.querySelector('.task:last-child .check').getAttribute('aria-pressed')"),'true');
+ assert.equal(await evaluate("document.querySelector('.task:last-child .task-title').disabled"),true);
+ assert.equal(await evaluate("document.getElementById('currentTask').textContent"),'已存在的任务');
+ log('Completed tasks cannot remain selected or masquerade as active');
  await command('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
  await sleep(200);
  assert.equal(await evaluate('document.documentElement.scrollWidth<=window.innerWidth'),true);
@@ -130,6 +162,11 @@ async function main(){
  await sleep(200);
  assert.equal(await evaluate('document.documentElement.scrollWidth<=window.innerWidth'),true);
  log('320px mobile viewport has no horizontal overflow');
+ await evaluate("const saved=JSON.parse(localStorage.getItem('focus-deck-v1'));saved.history={};localStorage.setItem('focus-deck-v1',JSON.stringify(saved))");
+ await reload();
+ assert.equal(await evaluate("Array.from(document.querySelectorAll('#weekly .bar')).length"),7);
+ assert.equal(await evaluate("Array.from(document.querySelectorAll('#weekly .bar')).every(e=>e.getBoundingClientRect().height===0)"),true);
+ log('Empty history renders zero-height bars, not fabricated activity');
 }
 (async()=>{try{await main();console.log('RESULT: ALL CHECKS PASSED')}catch(e){console.error('FAIL '+e.stack);process.exitCode=1}finally{
  try{ws?.close()}catch{}
