@@ -1,0 +1,6 @@
+﻿.edge* /
+.edge*/
+.backups/
+*.png
+node_modules/
+.taste-skill/
