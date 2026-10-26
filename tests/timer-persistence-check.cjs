@@ -80,6 +80,36 @@ async function main(){
  await launch();
  assert.equal(await evaluate("document.getElementById('clock').textContent"),'25:00');
  log('Initial timer renders');
+ const sliderBefore=await evaluate("getComputedStyle(document.querySelector('.mode-switch'),'::before').transform");
+ await evaluate("document.querySelector('[data-mode=short]').click()");
+ await sleep(450);
+ const sliderAfter=await evaluate("getComputedStyle(document.querySelector('.mode-switch'),'::before').transform");
+ assert.notEqual(sliderAfter,sliderBefore,'Mode highlight must move rather than jump states');
+ assert.equal(await evaluate("document.querySelector('[data-mode=short]').getAttribute('aria-pressed')"),'true');
+ await evaluate("document.querySelector('[data-mode=focus]').click()");
+ log('Animated mode indicator responds and exposes pressed state');
+ const pressAt=await evaluate("(()=>{const r=document.querySelector('[data-mode=short]').getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()");
+ const shadowBefore=await evaluate("getComputedStyle(document.querySelector('.mode-switch'),'::before').boxShadow");
+ await command('Input.dispatchMouseEvent',{type:'mouseMoved',x:pressAt.x,y:pressAt.y});
+ await command('Input.dispatchMouseEvent',{type:'mousePressed',x:pressAt.x,y:pressAt.y,button:'left',clickCount:1});
+ assert.equal(await evaluate("document.querySelector('.mode-switch').matches(':has(button:active)')"),true);
+ const shadowPressed=await evaluate("getComputedStyle(document.querySelector('.mode-switch'),'::before').boxShadow");
+ assert.notEqual(shadowPressed,shadowBefore,'Visual indicator must change during actual pointer press');
+ if(process.env.FOCUS_VISUAL_CAPTURE==='1'){const frame=await command('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});fs.writeFileSync(path.join(project,'apple-press-actual.png'),Buffer.from(frame.data,'base64'))}
+ await command('Input.dispatchMouseEvent',{type:'mouseReleased',x:pressAt.x,y:pressAt.y,button:'left',clickCount:1});
+ await sleep(550);
+ assert.equal(await evaluate("document.querySelector('.mode-switch').matches(':has(button:active)')"),false);
+ assert.equal(await evaluate("getComputedStyle(document.querySelector('.mode-switch'),'::before').boxShadow"),shadowBefore);
+ if(process.env.FOCUS_VISUAL_CAPTURE==='1'){const frame=await command('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});fs.writeFileSync(path.join(project,'apple-release-actual.png'),Buffer.from(frame.data,'base64'))}
+ log('Segmented control pressed and released states have observable optical feedback');
+ const modesHit=await evaluate("Array.from(document.querySelectorAll('.mode-switch button,#toggle,#reset,.add button')).map(e=>({w:e.getBoundingClientRect().width,h:e.getBoundingClientRect().height}))");
+ assert.ok(modesHit.every(b=>b.w>=44&&b.h>=44),'Primary and segmented controls must remain >=44px targets');
+ await command('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});
+ const reduced=await evaluate("getComputedStyle(document.querySelector('.mode-switch'),'::before').transitionDuration");
+ assert.match(reduced,/^(?:1e-05s|0\.00001s|0s)/,'Reduced motion must remove slider transition');
+ await command('Emulation.setEmulatedMedia',{features:[]});
+ log('Primary controls meet 44px minimum and reduced motion removes the transition');
+ await evaluate("document.querySelector('[data-mode=focus]').click()");
  await evaluate("localStorage.setItem('focus-deck-v1',JSON.stringify({tasks:[{id:9,title:'已存在的任务',done:false}],history:{'2026-10-25':50},pomodoros:2}))");
  await reload();
  assert.equal(await evaluate("document.getElementById('taskList').textContent.includes('已存在的任务')"),true);
@@ -122,6 +152,24 @@ async function main(){
  await reload();
  assert.equal(await evaluate("document.getElementById('clock').textContent"),'25:00');
  log('Reset state survives reload');
+ await evaluate("document.dispatchEvent(new KeyboardEvent('keydown',{code:'Space',bubbles:true,cancelable:true}))");
+ assert.equal(await evaluate("JSON.parse(localStorage.getItem('focus-deck-v1')).timer.running"),true);
+ await evaluate("document.dispatchEvent(new KeyboardEvent('keydown',{code:'Space',bubbles:true,cancelable:true}))");
+ assert.equal(await evaluate("JSON.parse(localStorage.getItem('focus-deck-v1')).timer.running"),false);
+ await evaluate("document.dispatchEvent(new KeyboardEvent('keydown',{code:'KeyR',bubbles:true,cancelable:true}))");
+ assert.equal(await evaluate("document.getElementById('clock').textContent"),'25:00');
+ await evaluate("document.getElementById('taskInput').dispatchEvent(new KeyboardEvent('keydown',{code:'Space',bubbles:true,cancelable:true}))");
+ assert.equal(await evaluate("JSON.parse(localStorage.getItem('focus-deck-v1')).timer.running"),false);
+ log('Space toggles timer and R resets, while typing never triggers hotkeys');
+ assert.equal(await evaluate("document.querySelector('.side').contains(document.querySelector('.stats'))"),true);
+ const hits=await evaluate("Array.from(document.querySelectorAll('.task .check, .task .del')).map(e=>({w:e.getBoundingClientRect().width,h:e.getBoundingClientRect().height}))");
+ assert.ok(hits.length>0&&hits.every(b=>b.w>=44&&b.h>=44),'Task action targets must be at least 44px');
+ log('Stats remain beside desktop tasks and task actions meet 44px hit target');
+ await evaluate("document.querySelector('.task:last-child .check').click()");
+ assert.equal(await evaluate("document.querySelector('.task:last-child .check').getAttribute('aria-pressed')"),'true');
+ assert.equal(await evaluate("document.querySelector('.task:last-child .task-title').disabled"),true);
+ assert.equal(await evaluate("document.getElementById('currentTask').textContent"),'已存在的任务');
+ log('Completed tasks cannot remain selected or masquerade as active');
  await command('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
  await sleep(200);
  assert.equal(await evaluate('document.documentElement.scrollWidth<=window.innerWidth'),true);
@@ -130,6 +178,11 @@ async function main(){
  await sleep(200);
  assert.equal(await evaluate('document.documentElement.scrollWidth<=window.innerWidth'),true);
  log('320px mobile viewport has no horizontal overflow');
+ await evaluate("const saved=JSON.parse(localStorage.getItem('focus-deck-v1'));saved.history={};localStorage.setItem('focus-deck-v1',JSON.stringify(saved))");
+ await reload();
+ assert.equal(await evaluate("Array.from(document.querySelectorAll('#weekly .bar')).length"),7);
+ assert.equal(await evaluate("Array.from(document.querySelectorAll('#weekly .bar')).every(e=>e.getBoundingClientRect().height===0)"),true);
+ log('Empty history renders zero-height bars, not fabricated activity');
 }
 (async()=>{try{await main();console.log('RESULT: ALL CHECKS PASSED')}catch(e){console.error('FAIL '+e.stack);process.exitCode=1}finally{
  try{ws?.close()}catch{}
